@@ -19,6 +19,7 @@ from robustx.generators.robust_CE_methods.PROPLACE import PROPLACE
 from robustx.generators.robust_CE_methods.RNCE import RNCE
 from robustx.generators.robust_CE_methods.ROAR import ROAR
 from robustx.generators.robust_CE_methods.STCE import STCE
+from robustx.generators.robust_CE_methods.EntropicRiskCE import EntropicRiskCE
 from robustx.lib.tasks.ClassificationTask import ClassificationTask
 import time
 from tabulate import tabulate
@@ -26,7 +27,7 @@ from tabulate import tabulate
 METHODS = {"APAS": APAS, "ArgEnsembling": ArgEnsembling, "DiverseRobustCE": DiverseRobustCE, "MCER": MCER,
            "ModelMultiplicityMILP": ModelMultiplicityMILP, "PROPLACE": PROPLACE, "RNCE": RNCE, "ROAR": ROAR,
            "STCE": STCE, "BinaryLinearSearch": BinaryLinearSearch, "GuidedBinaryLinearSearch": GuidedBinaryLinearSearch,
-           "NNCE": NNCE, "KDTreeNNCE": KDTreeNNCE, "MCE": MCE, "Wachter": Wachter}
+           "NNCE": NNCE, "KDTreeNNCE": KDTreeNNCE, "MCE": MCE, "Wachter": Wachter, "EntropicRiskCE": EntropicRiskCE}
 EVALUATIONS = {"Distance": DistanceEvaluator, "Validity": ValidityEvaluator, "Manifold": ManifoldEvaluator,
                "Delta-robustness": RobustnessProportionEvaluator}
 
