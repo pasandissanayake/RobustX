@@ -1,1 +1,10 @@
+Changes made:
+------------
 [1] Wachter method in robustx > generators > CE_methods > Wachter.py -- changed DEVICE being assigned automatically. Now the device can be provided as an arg to the _generate_counterfactuals method.
+
+
+
+
+TODO:
+----
+[1] EnsembleModelWrapper documentation

@@ -35,6 +35,7 @@ robustx/generators/CE_methods/__init__.py
 robustx/generators/robust_CE_methods/APAS.py
 robustx/generators/robust_CE_methods/ArgEnsembling.py
 robustx/generators/robust_CE_methods/DiverseRobustCE.py
+robustx/generators/robust_CE_methods/EntropicRiskCE.py
 robustx/generators/robust_CE_methods/MCER.py
 robustx/generators/robust_CE_methods/ModelMultiplicityMILP.py
 robustx/generators/robust_CE_methods/PROPLACE.py
@@ -57,6 +58,7 @@ robustx/lib/models/__init__.py
 robustx/lib/models/keras_models/SimpleKerasNNModel.py
 robustx/lib/models/keras_models/__init__.py
 robustx/lib/models/pytorch_models/CustomPyTorchModel.py
+robustx/lib/models/pytorch_models/EnsembleModelWrapper.py
 robustx/lib/models/pytorch_models/SimpleNNModel.py
 robustx/lib/models/pytorch_models/__init__.py
 robustx/lib/models/sklearn_models/DecisionTreeModel.py
