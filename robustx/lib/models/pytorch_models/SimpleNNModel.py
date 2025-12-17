@@ -67,7 +67,7 @@ class SimpleNNModel(BaseModel):
         if seed is not None:
             torch.manual_seed(seed)
         super().__init__(self.__create_model())
-        self.criterion = nn.BCELoss()
+        self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self._model.parameters(), lr=0.001)
 
     def __create_model(self):
@@ -101,7 +101,7 @@ class SimpleNNModel(BaseModel):
         """
         self.model.train()
         X_tensor = torch.tensor(X.values, dtype=torch.float32)
-        y_tensor = torch.tensor(y.values, dtype=torch.float32).view(-1, 1)
+        y_tensor = torch.tensor(y.values, dtype=torch.long).squeeze()
         for epoch in range(epochs):
             self.optimizer.zero_grad()
             outputs = self._model(X_tensor)
@@ -166,7 +166,7 @@ class SimpleNNModel(BaseModel):
             X_tensor = torch.FloatTensor(X_test)
             y_tensor = torch.FloatTensor(y_test).view(-1, 1)
             y_pred = self._model(X_tensor)
-            y_pred_classes = (y_pred > 0.5).float()
+            y_pred_classes = torch.argmax(y_pred, dim=1).float()
             accuracy = (y_pred_classes.view(-1) == y_tensor.view(-1)).float().mean().item()
             
         return accuracy

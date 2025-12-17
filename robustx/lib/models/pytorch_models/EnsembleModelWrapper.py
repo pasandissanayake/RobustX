@@ -60,19 +60,19 @@ class EnsembleModelWrapper(BaseModel):
                  In case of ENSEMBLE_SINGLE_OUTPUT_MULTI_TARGET_DICT or ENSEMBLE_MULTI_OUTPUT_MULTI_TARGET_LIST, 
                  a dict of the form {target: preds} where preds is a tensor with shape (n_models, batch_size, n_classes)                
         """
-        X.to(self.device)
+        X = X.to(self.device)
 
         # If the ensemble is a list of models predicting the same target, output: tensor (n_models, batch_size, n_classes)
         if self.ensemble_type == EnsembleModelWrapper.ENSEMBLE_SINGLE_OUTPUT_SINGLE_TARGET_LIST:
             assert isinstance(self.model_ensemble, List), f"Incorrect model ensemble type {self.ensemble_type}, where actual type is {type(self.model_ensemble)}"
             prob_ensemble = []
             for model in self.model_ensemble:
-                model.to(self.device)
+                model = model.to(self.device)
                 model.eval()
                 outputs = model(X) # shape: (batch_size, n_classes)
                 if apply_softmax:
                     outputs = torch.nn.functional.softmax(outputs, dim=1)
-                prob_ensemble.append(outputs.unsqueeze(dim=0)) # shape: (1, batch_size, n_classes)
+                prob_ensemble.append(outputs) # shape: (1, batch_size, n_classes)
             prob_ensemble = torch.stack(prob_ensemble, dim=0)  # Shape: (n_models, batch_size, n_classes)
             return prob_ensemble
         
@@ -83,12 +83,11 @@ class EnsembleModelWrapper(BaseModel):
             for target_key in self.model_ensemble.keys():
                 model_output_list = []
                 for model in self.model_ensemble[target_key]:
-                    model.to(self.device)
+                    model = model.to(self.device)
                     model.eval()
                     outputs = model(X)
                     if apply_softmax:
                         outputs = torch.nn.functional.softmax(outputs, dim=1) # shape: (batch_size, n_classes)
-                    outputs = outputs.unsqueeze(dim=0) # shape: (1, batch_size, n_classes)
                     model_output_list.append(outputs)
                 prob_ensemble[target_key] = torch.stack(model_output_list, dim=0) # shape: (n_models, batch_size, n_classes)
             return prob_ensemble
@@ -98,13 +97,12 @@ class EnsembleModelWrapper(BaseModel):
             assert isinstance(self.model_ensemble, Dict), f"Incorrect model ensemble type {self.ensemble_type}, where actual type is {type(self.model_ensemble)}"
             prob_ensemble = {}
             for model in self.model_ensemble:
-                model.to(self.device)
+                model = model.to(self.device)
                 model.eval()
                 outputs = model(X)
                 for target_key, output in outputs.items():
                     if apply_softmax:
                         output = torch.nn.functional.softmax(output, dim=1) # shape: (batch_size, n_classes)
-                    output = output.unsqueeze(dim=0) # shape: (1, batch_size, n_classes)
                     if target_key in prob_ensemble:
                         prob_ensemble[target_key].append(output)
                     else:
@@ -123,7 +121,7 @@ class EnsembleModelWrapper(BaseModel):
     def predict(self, X: pd.DataFrame) -> pd.DataFrame:
         X_tensor = torch.Tensor(X.to_numpy()).to(self.device)
         prob_ensemble = self.predict_tensor(X_tensor, apply_softmax=True)
-
+        
         # If the ensemble is a list of models predicting the same target
         if self.ensemble_type == EnsembleModelWrapper.ENSEMBLE_SINGLE_OUTPUT_SINGLE_TARGET_LIST:
             aggregated_labels = self.aggregate_preds(prob_ensemble, self.aggregation_method)

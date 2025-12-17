@@ -19,6 +19,13 @@ class EntropicRisk(torch.nn.Module):
         :theta (float): Risk aversion parameter. Higher values indicate more risk-averse behavior.
     """
     def __init__(self, theta:float, loss_fn:Callable, weights:Union[Dict[Any, float], None]):
+        """
+        Initialize EntropicRisk loss
+        
+        :param theta: Risk aversion parameter
+        :param loss_fn: Loss for computing the risk
+        :param weights: Weights for considering importance in multi-target loss computation
+        """
         super(EntropicRisk, self).__init__()
         self.theta = theta
         self.loss_fn = loss_fn
@@ -30,34 +37,37 @@ class EntropicRisk(torch.nn.Module):
         """
         Computes the entropic risk given the ensemble prediction probabilities.
         Args:
-            :param preds: ensemble prediction probabilities for a given class - a tensor with shape 
-                          (n_models, batch_size,) or a dictionary of the form {id: preds} with preds 
-                          is a tensor with shape (batch_size,)
-            :return: entropic risk values, shape: (batch_size)
+            :param preds: Ensemble prediction probabilities for a given class - a tensor with shape 
+                          (n_models, batch_size) or a dictionary of the form {target: preds_ensemble} with 
+                          preds_ensemble is a tensor with shape (n_models, batch_size)
+            :return: Entropic risk values, shape: (batch_size)
         """
         
         if isinstance(preds, torch.Tensor):
-            exp_logits = torch.exp(self.theta * self.loss_fn(preds))  # Apply exponential and theta* loss_fn(m(x)) loss
-            avg_exp_logits = torch.mean(exp_logits, dim=0)  # Average over models, Shape: (batch_size)        
-            risk = (1 / self.theta) * torch.log(avg_exp_logits + 1e-10)  # Add small constant for numerical stability
+            # Apply exponential and theta* loss_fn(m(x)) loss. Shape:(n_models, batch_size)
+            exp_logits = torch.exp(self.theta * self.loss_fn(preds))
+            # Average over models. Shape: (batch_size)     
+            avg_exp_logits = torch.mean(exp_logits, dim=0)     
+            # Compute risk. Add small constant for numerical stability. Shape: (batch_size)
+            risk = (1 / self.theta) * torch.log(avg_exp_logits + 1e-10)
         else:
-            keys = preds.keys()
+            target_keys = preds.keys()
             if self.weights is None:
-                self.weights = {key: 1 for key in keys}
+                self.weights = {key: 1 for key in target_keys}
 
-            exp_logits_list = []
-            for key in keys:
-                # Apply exponential and theta*loss_fn(m(x)) loss, shape: (1, batch_size)
-                exp_logits = self.weights[key]*torch.exp(self.theta * self.loss_fn(preds[key])).unsqueeze(dim=0)
-                print(f"exp_logits: {exp_logits.shape}")
-                # Append to list for later computing weighted average
-                exp_logits_list.append(exp_logits)
+            avg_exp_logits_list = []
+            for target_key in target_keys:
+                # Apply exponential and theta*loss_fn(m(x)) loss, shape: (n_models, batch_size)
+                exp_logits = self.weights[target_key]*torch.exp(self.theta * self.loss_fn(preds[target_key])).unsqueeze(dim=0)
+                # Average over models. Shape: (batch_size)
+                avg_exp_logits = torch.mean(exp_logits, dim=0)    
+                # Append to list for later computing weighted average. Shape: [(batch_size)]
+                avg_exp_logits_list.append(avg_exp_logits)
 
-            # Compute weighted average, shape: (len(keys), batch_size) --> (1, batch_size) --> (batch_size,)
-            wavg_exp_logits = torch.sum(torch.stack(exp_logits_list, dim=0), dim=0).squeeze() / sum(self.weights.values()) * len(self.weights.keys())
-            print(f"exp_logits: {wavg_exp_logits.shape}")
-            
-            risk = (1 / self.theta) * torch.log(wavg_exp_logits + 1e-10)  # Add small constant for numerical stability
+            # Compute weighted average, shape: sum(n_targets, batch_size) --> (batch_size)
+            wavg_exp_logits = torch.sum(torch.stack(avg_exp_logits_list, dim=0), dim=0) / sum(self.weights.values())
+            # Compute risk. Add small constant for numerical stability. Shape: (batch_size)
+            risk = (1 / self.theta) * torch.log(wavg_exp_logits + 1e-10)  
         
         return risk
 
@@ -73,7 +83,6 @@ class EntropicRiskCE(CEGenerator):
 
     def _generation_method(self, 
                            instance:pd.DataFrame,
-                           initial_cf: pd.DataFrame,
                            target_class:int=1,
                            loss_fn: Callable=lambda x: 1-x,
                            target_weights: Dict[Any, float]=None,
@@ -81,7 +90,6 @@ class EntropicRiskCE(CEGenerator):
                            theta:float=1.0,
                            tau:float=0.5,
                            lr:float=0.01, 
-                           seed:int=None,
                            device:str="cuda" if torch.cuda.is_available() else "cpu",
                            verbose:bool=False,
                            **kwargs):
@@ -103,9 +111,12 @@ class EntropicRiskCE(CEGenerator):
             :param verbose: If True, prints detailed optimization information.
             :return: A DataFrame representing the generated counterfactual explanation.
         """
+        ref_ce = torch.Tensor(instance.to_numpy())
+        if len(ref_ce.shape) < 2:
+            ref_ce = ref_ce.unsqueeze(dim=0) # Insert batch dimension if required
 
-        ref_ce = torch.Tensor(initial_cf.to_numpy()).to(device)
         ent_ce = torch.autograd.Variable(ref_ce.clone(), requires_grad=True).to(device)
+        
 
         optimiser = torch.optim.Adam([ent_ce], lr, amsgrad=True)
         entropic_risk = EntropicRisk(
@@ -123,20 +134,21 @@ class EntropicRiskCE(CEGenerator):
             # For multiclass classification, predict_ensemble_proba_tensor returns shape: (n_models, batch_size[=1], n_classes) 
             # For binary classification, predict_ensemble_proba_tensor shape: (n_models, batch_size[=1], 1)
             # Either case, we need to extract the probabilities for the target class and the resultant
-            # class_prob should have shape: (n_models, batch_size)
+            # class_prob should have shape: (n_models, batch_size)                        
             preds = self.task.model.predict_ensemble_proba_tensor(ent_ce)
 
             if isinstance(preds, torch.Tensor):
                 if preds.shape[2] >= 2:
-                    class_prob = preds[:, :, target_class].squeeze(dim=2)  # Get probs for positive class, shape: (n_models, batch_size)
+                    class_prob = preds[:, :, target_class]  # Get probs for positive class, shape: (n_models, batch_size)
                 else:
-                    class_prob = preds.squeeze(dim=2)  # Get probs for positive class, shape: (n_models, batch_size)
+                    class_prob = preds  # Get probs for positive class, shape: (n_models, batch_size)
             elif isinstance(preds, Dict):
+                class_prob = {}
                 for key in preds.keys():
                     if preds[key].shape[1] >= 2:
-                        class_prob = preds[key][:, target_class].squeeze(dim=1)  # Get probs for positive class, shape: (batch_size)
+                        class_prob[key] = preds[key][:, target_class]  # Get probs for positive class, shape: (batch_size)
                     else:
-                        class_prob = preds[key].squeeze(dim=1)  # Get probs for positive class, shape: (batch_size)
+                        class_prob[key] = preds[key]  # Get probs for positive class, shape: (batch_size)
 
             
             risk = entropic_risk(class_prob)
@@ -159,6 +171,5 @@ class EntropicRiskCE(CEGenerator):
 
         # Return the counterfactual as a DataFrame
         res = pd.DataFrame(ent_ce.detach().numpy())
-        res.columns = instance.index
         
         return res 
