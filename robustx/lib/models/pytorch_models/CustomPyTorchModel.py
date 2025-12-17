@@ -141,3 +141,6 @@ class CustomPyTorchModel(BaseModel):
             total = y_tensor.size(0)
         accuracy = correct / total
         return accuracy
+
+    def predict_proba_tensor(self, X: torch.Tensor) -> torch.Tensor:
+        return torch.from_numpy(self.predict_proba(pd.DataFrame(X.cpu().detach().numpy())).to_numpy())

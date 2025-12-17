@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from robustx.lib.tasks.ClassificationTask import ClassificationTask
 from robustx.generators.CEGenerator import CEGenerator
+from robustx.lib.models.BaseModel import BaseModel
+from typing import Union, Dict, Callable, Any
 
 
 class EntropicRisk(torch.nn.Module):
@@ -16,22 +18,47 @@ class EntropicRisk(torch.nn.Module):
     Args:
         :theta (float): Risk aversion parameter. Higher values indicate more risk-averse behavior.
     """
-    def __init__(self, theta):
+    def __init__(self, theta:float, loss_fn:Callable, weights:Union[Dict[Any, float], None]):
         super(EntropicRisk, self).__init__()
         self.theta = theta
+        self.loss_fn = loss_fn
+        self.weights = weights
 
-    def forward(self, ensemble_proba):
+    def forward(self, 
+                preds:Union[torch.Tensor, Dict[Any, torch.Tensor]], 
+            ):
         """
         Computes the entropic risk given the ensemble prediction probabilities.
         Args:
-            :param ensemble_proba: ensemble prediction probabilities, shape: (n_models, batch_size)
+            :param preds: ensemble prediction probabilities for a given class - a tensor with shape 
+                          (n_models, batch_size,) or a dictionary of the form {id: preds} with preds 
+                          is a tensor with shape (batch_size,)
             :return: entropic risk values, shape: (batch_size)
         """
-        # ensemble_proba contains prediction probs of each model in the ensemble
-        # for the target class, shape: (n_models, batch_size)
-        exp_logits = torch.exp(1 - self.theta * ensemble_proba)  # Apply exponential and 1-theta*m(x) loss
-        avg_exp_logits = torch.mean(exp_logits, dim=0)  # Average over models, Shape: (batch_size)        
-        risk = (1 / self.theta) * torch.log(avg_exp_logits + 1e-10)  # Add small constant for numerical stability
+        
+        if isinstance(preds, torch.Tensor):
+            exp_logits = torch.exp(self.theta * self.loss_fn(preds))  # Apply exponential and theta* loss_fn(m(x)) loss
+            avg_exp_logits = torch.mean(exp_logits, dim=0)  # Average over models, Shape: (batch_size)        
+            risk = (1 / self.theta) * torch.log(avg_exp_logits + 1e-10)  # Add small constant for numerical stability
+        else:
+            keys = preds.keys()
+            if self.weights is None:
+                self.weights = {key: 1 for key in keys}
+
+            exp_logits_list = []
+            for key in keys:
+                # Apply exponential and theta*loss_fn(m(x)) loss, shape: (1, batch_size)
+                exp_logits = self.weights[key]*torch.exp(self.theta * self.loss_fn(preds[key])).unsqueeze(dim=0)
+                print(f"exp_logits: {exp_logits.shape}")
+                # Append to list for later computing weighted average
+                exp_logits_list.append(exp_logits)
+
+            # Compute weighted average, shape: (len(keys), batch_size) --> (1, batch_size) --> (batch_size,)
+            wavg_exp_logits = torch.sum(torch.stack(exp_logits_list, dim=0), dim=0).squeeze() / sum(self.weights.values()) * len(self.weights.keys())
+            print(f"exp_logits: {wavg_exp_logits.shape}")
+            
+            risk = (1 / self.theta) * torch.log(wavg_exp_logits + 1e-10)  # Add small constant for numerical stability
+        
         return risk
 
 
@@ -46,16 +73,16 @@ class EntropicRiskCE(CEGenerator):
 
     def _generation_method(self, 
                            instance:pd.DataFrame,
-                           base_cf_gen_class:CEGenerator=None,
-                           base_cf_gen_args:dict=None,
+                           initial_cf: pd.DataFrame,
                            target_class:int=1,
+                           loss_fn: Callable=lambda x: 1-x,
+                           target_weights: Dict[Any, float]=None,
                            max_iter:int=10,
                            theta:float=1.0,
                            tau:float=0.5,
                            lr:float=0.01, 
-                           ref_model_idx:int=None,
                            seed:int=None,
-                           device:str=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                           device:str="cuda" if torch.cuda.is_available() else "cpu",
                            verbose:bool=False,
                            **kwargs):
         """
@@ -76,30 +103,16 @@ class EntropicRiskCE(CEGenerator):
             :param verbose: If True, prints detailed optimization information.
             :return: A DataFrame representing the generated counterfactual explanation.
         """
-        
-        # Check that base generator class and args are provided
-        assert base_cf_gen_class is not None, "You must provide a base_cf_gen_class for generating the initial counterfactual."
-        assert base_cf_gen_args is not None, "You must provide base_cf_gen_args for the base counterfactual generator."
 
-        # Get a reference model from the ensemble
-        model_ensemble = self.task.model.model_ensemble
-        n_models = len(model_ensemble)
-        if ref_model_idx is None:
-            np.random.seed(seed)
-            ref_model_idx = np.random.randint(0, n_models)
-        ref_model = model_ensemble[ref_model_idx]
-
-        # Get an initial counterfactual from the base generator
-        ref_task = ClassificationTask(ref_model, self.task.training_data)
-        ce_gen = base_cf_gen_class(ref_task)
-        ref_ce = ce_gen.generate_for_instance(instance, **base_cf_gen_args)
-
-
-        ref_ce = torch.Tensor(ref_ce.to_numpy()).to(device)
+        ref_ce = torch.Tensor(initial_cf.to_numpy()).to(device)
         ent_ce = torch.autograd.Variable(ref_ce.clone(), requires_grad=True).to(device)
 
         optimiser = torch.optim.Adam([ent_ce], lr, amsgrad=True)
-        entropic_risk = EntropicRisk(theta).to(device)
+        entropic_risk = EntropicRisk(
+            theta=theta,
+            loss_fn=loss_fn,
+            weights=target_weights
+        ).to(device)
 
         # Optimization loop
         iterations = 0
@@ -111,14 +124,23 @@ class EntropicRiskCE(CEGenerator):
             # For binary classification, predict_ensemble_proba_tensor shape: (n_models, batch_size[=1], 1)
             # Either case, we need to extract the probabilities for the target class and the resultant
             # class_prob should have shape: (n_models, batch_size)
-            class_prob = self.task.model.predict_ensemble_proba_tensor(ent_ce)
-            if class_prob.shape[2] >= 2:
-                class_prob = class_prob[:, 0, target_class].squeeze(dim=2)  # Get probs for positive class
-            else:
-                class_prob = class_prob.squeeze(dim=2)  # Get probs for positive class
+            preds = self.task.model.predict_ensemble_proba_tensor(ent_ce)
+
+            if isinstance(preds, torch.Tensor):
+                if preds.shape[2] >= 2:
+                    class_prob = preds[:, :, target_class].squeeze(dim=2)  # Get probs for positive class, shape: (n_models, batch_size)
+                else:
+                    class_prob = preds.squeeze(dim=2)  # Get probs for positive class, shape: (n_models, batch_size)
+            elif isinstance(preds, Dict):
+                for key in preds.keys():
+                    if preds[key].shape[1] >= 2:
+                        class_prob = preds[key][:, target_class].squeeze(dim=1)  # Get probs for positive class, shape: (batch_size)
+                    else:
+                        class_prob = preds[key].squeeze(dim=1)  # Get probs for positive class, shape: (batch_size)
+
             
             risk = entropic_risk(class_prob)
-            risk.sum().backward()
+            risk.backward()
             optimiser.step()
 
             # Break conditions
