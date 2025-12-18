@@ -58,14 +58,19 @@ class EntropicRisk(torch.nn.Module):
             avg_exp_logits_list = []
             for target_key in target_keys:
                 # Apply exponential and theta*loss_fn(m(x)) loss, shape: (n_models, batch_size)
-                exp_logits = self.weights[target_key]*torch.exp(self.theta * self.loss_fn(preds[target_key])).unsqueeze(dim=0)
+                # print(f"preds target: {preds[target_key].shape}")
+                exp_logits = self.weights[target_key]*torch.exp(self.theta * self.loss_fn(preds[target_key]))
+                # print(f"exp_logits: {exp_logits.shape}")
                 # Average over models. Shape: (batch_size)
-                avg_exp_logits = torch.mean(exp_logits, dim=0)    
+                avg_exp_logits = torch.mean(exp_logits, dim=0)
+                # print(f"avg_exp_logits: {avg_exp_logits.shape}")    
                 # Append to list for later computing weighted average. Shape: [(batch_size)]
                 avg_exp_logits_list.append(avg_exp_logits)
+                # print(f"avg_exp_logits_list: {avg_exp_logits_list}")    
 
             # Compute weighted average, shape: sum(n_targets, batch_size) --> (batch_size)
             wavg_exp_logits = torch.sum(torch.stack(avg_exp_logits_list, dim=0), dim=0) / sum(self.weights.values())
+            # print(f"wavg_exp_logits: {wavg_exp_logits.shape}")    
             # Compute risk. Add small constant for numerical stability. Shape: (batch_size)
             risk = (1 / self.theta) * torch.log(wavg_exp_logits + 1e-10)  
         
@@ -145,13 +150,12 @@ class EntropicRiskCE(CEGenerator):
             elif isinstance(preds, Dict):
                 class_prob = {}
                 for key in preds.keys():
-                    if preds[key].shape[1] >= 2:
-                        class_prob[key] = preds[key][:, target_class]  # Get probs for positive class, shape: (batch_size)
+                    if preds[key].shape[2] >= 2:
+                        class_prob[key] = preds[key][:, :, target_class]  # Get probs for positive class, shape: (n_model, batch_size)
                     else:
-                        class_prob[key] = preds[key]  # Get probs for positive class, shape: (batch_size)
+                        class_prob[key] = preds[key]  # Get probs for positive class, shape: (n_model, batch_size)
 
-            
-            risk = entropic_risk(class_prob)
+            risk = entropic_risk(class_prob) # class_prob shape: (n_models, batch_size) or {target: (n_model, batch_size)}
             risk.backward()
             optimiser.step()
 

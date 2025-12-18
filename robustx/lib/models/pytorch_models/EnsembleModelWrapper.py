@@ -133,7 +133,7 @@ class EnsembleModelWrapper(BaseModel):
             aggregated_labels = {}
             for target_key in prob_ensemble.keys():
                 aggregated_labels[target_key] = self.aggregate_preds(prob_ensemble[target_key], self.aggregation_method).cpu().detach().numpy()
-            return pd.DataFrame(aggregated_labels, columns=['prediction'])
+            return pd.DataFrame(aggregated_labels)
         
         else:
             print(f"Invalid model ensemble type {self.ensemble_type}, where actual type is {type(self.model_ensemble)}")
@@ -155,13 +155,17 @@ class EnsembleModelWrapper(BaseModel):
         return self.predict_tensor(X, apply_softmax=True)
     
     def evaluate(self, X: pd.DataFrame, y: pd.DataFrame):
-        y_pred = self.predict(X)
-        accuracy = accuracy_score(y, y_pred)
-        report = classification_report(y, y_pred)
-        return {
-            'accuracy': accuracy,
-            'classification_report': report
-        }
+        y_pred = self.predict(X).to_dict(orient="list")
+        results = {}
+        for target, preds in y_pred.items():
+            accuracy = accuracy_score(y[target], preds)
+            report = classification_report(y[target], preds)
+            results[target] = {'accuracy': accuracy, 'classification_report': report}
+        return results
     
-    def compute_accuracy(self, X_test, y_test):            
-        return self.evaluate(X_test, y_test)['accuracy']
+    def compute_accuracy(self, X_test:pd.DataFrame, y_test:pd.DataFrame):    
+        results = self.evaluate(X_test, y_test)        
+        return {
+            target: results[target]['accuracy'] for target in y_test.columns
+        }
+            
