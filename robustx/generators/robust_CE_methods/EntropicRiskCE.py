@@ -5,6 +5,7 @@ from robustx.lib.tasks.ClassificationTask import ClassificationTask
 from robustx.generators.CEGenerator import CEGenerator
 from robustx.lib.models.BaseModel import BaseModel
 from typing import Union, Dict, Callable, Any
+from collections.abc import Iterable
 
 
 class EntropicRisk(torch.nn.Module):
@@ -91,6 +92,9 @@ class EntropicRiskCE(CEGenerator):
                            target_class:int=1,
                            loss_fn: Callable=lambda x: 1-x,
                            target_weights: Dict[Any, float]=None,
+                           project_to_range: bool=True,
+                           permitted_ranges: Dict[Any, Iterable]=None,
+                           immutable_features: Iterable[str]=[],
                            max_iter:int=10,
                            theta:float=1.0,
                            tau:float=0.5,
@@ -116,15 +120,24 @@ class EntropicRiskCE(CEGenerator):
             :param verbose: If True, prints detailed optimization information.
             :return: A DataFrame representing the generated counterfactual explanation.
         """
+        
+        # Prepare a list of indices of the immutable features
+        immutable_indices = [instance.index.get_loc(im_feat) for im_feat in immutable_features]
+        
+        # Prepare a dictionary of permitted ranges with feature location instead of feature name
+        if permitted_ranges is not None:
+            permitted_ranges_with_idx = {
+                instance.index.get_loc(feature_name): val_range for feature_name, val_range in permitted_ranges.items()
+            }
+        
+        # Initialize counterfactual <-- instance
         ref_ce = torch.tensor(instance.to_numpy(), dtype=torch.float, device=device)
         if len(ref_ce.shape) < 2:
             ref_ce = ref_ce.unsqueeze(dim=0) # Insert batch dimension if required
 
         ent_ce = ref_ce.detach().clone().requires_grad_(True)
-        
-        # torch.autograd.Variable(ref_ce.clone(), requires_grad=True).to(device)
-        
-
+               
+        # Instantiate optimizer and entropic risk loss
         optimiser = torch.optim.Adam([ent_ce], lr, amsgrad=True)
         entropic_risk = EntropicRisk(
             theta=theta,
@@ -159,7 +172,16 @@ class EntropicRiskCE(CEGenerator):
 
             risk = entropic_risk(class_prob) # class_prob shape: (n_models, batch_size) or {target: (n_model, batch_size)}
             risk.backward()
+
+            # Zero-out gradients for immutable features:
+            ent_ce.grad[:, immutable_indices] = 0
+
             optimiser.step()
+
+            if project_to_range:
+                with torch.no_grad():
+                    for feat_idx, (fmin, fmax) in permitted_ranges_with_idx.items():
+                        ent_ce[:, feat_idx].clamp_(min=fmin, max=fmax)
 
             # Break conditions
             if risk.item() < tau:
@@ -176,6 +198,6 @@ class EntropicRiskCE(CEGenerator):
             print("Warning: Entropic CE generation did not converge to a valid counterfactual within the max iterations.")
 
         # Return the counterfactual as a DataFrame
-        res = pd.DataFrame(ent_ce.detach().cpu().numpy())
+        res = pd.DataFrame(ent_ce.detach().cpu().numpy(), columns=instance.index)
         
         return res 
