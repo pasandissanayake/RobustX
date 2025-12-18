@@ -176,8 +176,10 @@ class EntropicRiskCE(CEGenerator):
             # Zero-out gradients for immutable features:
             ent_ce.grad[:, immutable_indices] = 0
 
+            # Take gradient step
             optimiser.step()
 
+            # Project the updated counterfactual features to permitted ranges
             if project_to_range:
                 with torch.no_grad():
                     for feat_idx, (fmin, fmax) in permitted_ranges_with_idx.items():
@@ -190,8 +192,8 @@ class EntropicRiskCE(CEGenerator):
             
             # Print verbose info
             if verbose:
-                print(f"Iteration {iterations:02d}: Entropic risk = {risk.item():.4f}")
-                print(f"Current CE: {ent_ce.detach().cpu().numpy()}")
+                print(f"Iteration {iterations:03d}: Entropic risk = {risk.item():.08f}")
+                # print(f"Current CE: {ent_ce.detach().cpu().numpy()}")
         
         # If risk threshold not met, print warning
         if not cf_is_valid:
