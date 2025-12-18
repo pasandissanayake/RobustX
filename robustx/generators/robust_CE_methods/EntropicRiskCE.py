@@ -116,11 +116,13 @@ class EntropicRiskCE(CEGenerator):
             :param verbose: If True, prints detailed optimization information.
             :return: A DataFrame representing the generated counterfactual explanation.
         """
-        ref_ce = torch.Tensor(instance.to_numpy())
+        ref_ce = torch.tensor(instance.to_numpy(), dtype=torch.float, device=device)
         if len(ref_ce.shape) < 2:
             ref_ce = ref_ce.unsqueeze(dim=0) # Insert batch dimension if required
 
-        ent_ce = torch.autograd.Variable(ref_ce.clone(), requires_grad=True).to(device)
+        ent_ce = ref_ce.detach().clone().requires_grad_(True)
+        
+        # torch.autograd.Variable(ref_ce.clone(), requires_grad=True).to(device)
         
 
         optimiser = torch.optim.Adam([ent_ce], lr, amsgrad=True)
@@ -174,6 +176,6 @@ class EntropicRiskCE(CEGenerator):
             print("Warning: Entropic CE generation did not converge to a valid counterfactual within the max iterations.")
 
         # Return the counterfactual as a DataFrame
-        res = pd.DataFrame(ent_ce.detach().numpy())
+        res = pd.DataFrame(ent_ce.detach().cpu().numpy())
         
         return res 

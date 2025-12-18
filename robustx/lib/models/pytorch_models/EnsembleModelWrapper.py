@@ -94,7 +94,7 @@ class EnsembleModelWrapper(BaseModel):
         
         # If the ensemble is a list of multi-output models predicting multiple targets
         elif self.ensemble_type == EnsembleModelWrapper.ENSEMBLE_MULTI_OUTPUT_MULTI_TARGET_LIST:
-            assert isinstance(self.model_ensemble, Dict), f"Incorrect model ensemble type {self.ensemble_type}, where actual type is {type(self.model_ensemble)}"
+            assert isinstance(self.model_ensemble, List), f"Incorrect model ensemble type {self.ensemble_type}, where actual type is {type(self.model_ensemble)}"
             prob_ensemble = {}
             for model in self.model_ensemble:
                 model = model.to(self.device)
@@ -109,7 +109,7 @@ class EnsembleModelWrapper(BaseModel):
                         prob_ensemble[target_key] = [output]
 
             prob_ensemble = {
-                key: torch.stack(val, dim=0) for key, val in prob_ensemble # shape: (n_models, batch_size, n_classes)
+                key: torch.stack(val, dim=0) for key, val in prob_ensemble.items() # shape: (n_models, batch_size, n_classes)
             }
             return prob_ensemble
         
