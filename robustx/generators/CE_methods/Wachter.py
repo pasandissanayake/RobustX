@@ -42,7 +42,9 @@ class Wachter(CEGenerator):
 
     def _generation_method(self, instance, column_name="target", neg_value=0, lamb=0.1, lr=0.02,
                            max_iter=10000000, max_allowed_minutes=0.5, epsilon=0.001, 
-                           device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), **kwargs):
+                           device = "cpu",
+                        #    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), 
+                           **kwargs):
         """
         Generates a counterfactual explanation using gradient descent, based on Wachter's method.
 

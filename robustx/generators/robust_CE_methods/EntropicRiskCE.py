@@ -202,4 +202,4 @@ class EntropicRiskCE(CEGenerator):
         # Return the counterfactual as a DataFrame
         res = pd.DataFrame(ent_ce.detach().cpu().numpy(), columns=instance.index)
         
-        return res 
+        return res
