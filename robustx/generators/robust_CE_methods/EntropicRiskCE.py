@@ -4,6 +4,7 @@ import pandas as pd
 from robustx.lib.tasks.ClassificationTask import ClassificationTask
 from robustx.generators.CEGenerator import CEGenerator
 from robustx.lib.models.BaseModel import BaseModel
+from robustx.generators.CE_methods.WachterMultiTarget import WachterMultiTarget
 from typing import Union, Dict, Callable, Any
 from collections.abc import Iterable
 
@@ -89,7 +90,7 @@ class EntropicRiskCE(CEGenerator):
 
     def _generation_method(self, 
                            instance:pd.DataFrame,
-                           target_class:int=1,
+                           target_class:Union[int, Dict[Any, int]]=1,
                            loss_fn: Callable=lambda x: 1-x,
                            target_weights: Dict[Any, float]=None,
                            project_to_range: bool=True,
@@ -101,6 +102,7 @@ class EntropicRiskCE(CEGenerator):
                            lr:float=0.01, 
                            device:str="cuda" if torch.cuda.is_available() else "cpu",
                            verbose:bool=False,
+                           wachter_args:Dict[str, Any]={},
                            **kwargs):
         """
         Generates a counterfactual explanation for the given instance using entropic risk minimization.
@@ -120,6 +122,19 @@ class EntropicRiskCE(CEGenerator):
             :param verbose: If True, prints detailed optimization information.
             :return: A DataFrame representing the generated counterfactual explanation.
         """
+
+
+        init_cf_generator = WachterMultiTarget(ct=self.task)
+        ref_ce = init_cf_generator.generate_for_instance(
+            instance=instance,
+            target_classes=target_class,
+            device=device,
+            immutable_features=immutable_features,
+            project_to_range=project_to_range,
+            permitted_ranges=permitted_ranges,
+            verbose=verbose,
+            **wachter_args
+        )
         
         # Prepare a list of indices of the immutable features
         immutable_indices = [instance.index.get_loc(im_feat) for im_feat in immutable_features]
@@ -130,8 +145,8 @@ class EntropicRiskCE(CEGenerator):
                 instance.index.get_loc(feature_name): val_range for feature_name, val_range in permitted_ranges.items()
             }
         
-        # Initialize counterfactual <-- instance
-        ref_ce = torch.tensor(instance.to_numpy(), dtype=torch.float, device=device)
+        # Initialize counterfactual <-- Wachter ce
+        ref_ce = torch.tensor(ref_ce.to_numpy(), dtype=torch.float, device=device)
         if len(ref_ce.shape) < 2:
             ref_ce = ref_ce.unsqueeze(dim=0) # Insert batch dimension if required
 
@@ -157,16 +172,18 @@ class EntropicRiskCE(CEGenerator):
             # class_prob should have shape: (n_models, batch_size)                        
             preds = self.task.model.predict_ensemble_proba_tensor(ent_ce)
 
-            if isinstance(preds, torch.Tensor):
+            if isinstance(preds, torch.Tensor) and isinstance(target_class, int):
                 if preds.shape[2] >= 2:
                     class_prob = preds[:, :, target_class]  # Get probs for positive class, shape: (n_models, batch_size)
                 else:
                     class_prob = preds  # Get probs for positive class, shape: (n_models, batch_size)
             elif isinstance(preds, Dict):
+                if isinstance(target_class, int):
+                    target_class = {key: target_class for key in preds.keys()}
                 class_prob = {}
                 for key in preds.keys():
                     if preds[key].shape[2] >= 2:
-                        class_prob[key] = preds[key][:, :, target_class]  # Get probs for positive class, shape: (n_model, batch_size)
+                        class_prob[key] = preds[key][:, :, target_class[key]]  # Get probs for positive class, shape: (n_model, batch_size)
                     else:
                         class_prob[key] = preds[key]  # Get probs for positive class, shape: (n_model, batch_size)
 
