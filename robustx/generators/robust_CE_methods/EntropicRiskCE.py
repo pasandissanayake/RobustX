@@ -124,17 +124,18 @@ class EntropicRiskCE(CEGenerator):
         """
 
 
-        init_cf_generator = WachterMultiTarget(ct=self.task)
-        ref_ce = init_cf_generator.generate_for_instance(
-            instance=instance,
-            target_classes=target_class,
-            device=device,
-            immutable_features=immutable_features,
-            project_to_range=project_to_range,
-            permitted_ranges=permitted_ranges,
-            verbose=verbose,
-            **wachter_args
-        )
+        # init_cf_generator = WachterMultiTarget(ct=self.task)
+        # ref_ce = init_cf_generator.generate_for_instance(
+        #     instance=instance,
+        #     target_classes=target_class,
+        #     device=device,
+        #     immutable_features=immutable_features,
+        #     project_to_range=project_to_range,
+        #     permitted_ranges=permitted_ranges,
+        #     verbose=verbose,
+        #     **wachter_args
+        # )
+        ref_ce = instance
         
         # Prepare a list of indices of the immutable features
         immutable_indices = [instance.index.get_loc(im_feat) for im_feat in immutable_features]
@@ -163,7 +164,7 @@ class EntropicRiskCE(CEGenerator):
         # Optimization loop
         iterations = 0
         cf_is_valid = False
-        while not cf_is_valid and iterations <= max_iter:
+        while not cf_is_valid and iterations < max_iter:
             optimiser.zero_grad()
 
             # For multiclass classification, predict_ensemble_proba_tensor returns shape: (n_models, batch_size[=1], n_classes) 
