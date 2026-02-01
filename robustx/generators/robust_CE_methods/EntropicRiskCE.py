@@ -100,8 +100,12 @@ class EntropicRiskCE(CEGenerator):
                            theta:float=1.0,
                            tau:float=0.5,
                            lr:float=0.01, 
+                           lamb:float=0.0,
+                           norm:str="l2",
                            device:str="cuda" if torch.cuda.is_available() else "cpu",
                            verbose:bool=False,
+                           get_validity:bool=False,
+                           use_scheduler:bool=False,
                            wachter_args:Dict[str, Any]={},
                            **kwargs):
         """
@@ -124,18 +128,18 @@ class EntropicRiskCE(CEGenerator):
         """
 
 
-        # init_cf_generator = WachterMultiTarget(ct=self.task)
-        # ref_ce = init_cf_generator.generate_for_instance(
-        #     instance=instance,
-        #     target_classes=target_class,
-        #     device=device,
-        #     immutable_features=immutable_features,
-        #     project_to_range=project_to_range,
-        #     permitted_ranges=permitted_ranges,
-        #     verbose=verbose,
-        #     **wachter_args
-        # )
-        ref_ce = instance
+        init_cf_generator = WachterMultiTarget(ct=self.task)
+        ref_ce = init_cf_generator.generate_for_instance(
+            instance=instance,
+            target_classes=target_class,
+            device=device,
+            immutable_features=immutable_features,
+            project_to_range=project_to_range,
+            permitted_ranges=permitted_ranges,
+            verbose=verbose,
+            **wachter_args
+        )
+        # ref_ce = instance
         
         # Prepare a list of indices of the immutable features
         immutable_indices = [instance.index.get_loc(im_feat) for im_feat in immutable_features]
@@ -155,11 +159,26 @@ class EntropicRiskCE(CEGenerator):
                
         # Instantiate optimizer and entropic risk loss
         optimiser = torch.optim.Adam([ent_ce], lr, amsgrad=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                    optimiser,
+                    mode="min",      # "min" for loss, "max" for accuracy/AUC
+                    factor=0.5,      # LR ← LR * factor
+                    patience=5,      # epochs with no improvement before reducing
+                    threshold=1e-3,
+                    min_lr=1e-6,
+        )
         entropic_risk = EntropicRisk(
             theta=theta,
             loss_fn=loss_fn,
             weights=target_weights
         ).to(device)
+
+        if norm=="l1":
+            norm_loss = torch.nn.L1Loss()
+        elif norm=="l2":
+            norm_loss = torch.nn.MSELoss()
+        else:
+            print(f"Invalid norm. Should be either 'l1' or 'l2', got {norm}")
 
         # Optimization loop
         iterations = 0
@@ -189,7 +208,9 @@ class EntropicRiskCE(CEGenerator):
                         class_prob[key] = preds[key]  # Get probs for positive class, shape: (n_model, batch_size)
 
             risk = entropic_risk(class_prob) # class_prob shape: (n_models, batch_size) or {target: (n_model, batch_size)}
-            risk.backward()
+            dist = norm_loss(ref_ce, ent_ce) 
+            loss = risk + lamb * dist
+            loss.backward()
 
             # Zero-out gradients for immutable features:
             ent_ce.grad[:, immutable_indices] = 0
@@ -201,7 +222,11 @@ class EntropicRiskCE(CEGenerator):
             if project_to_range:
                 with torch.no_grad():
                     for feat_idx, (fmin, fmax) in permitted_ranges_with_idx.items():
-                        ent_ce[:, feat_idx].clamp_(min=fmin, max=fmax)
+                        # ent_ce[:, feat_idx].clamp_(min=fmin, max=fmax)
+                        ent_ce[:, feat_idx] = ent_ce[:, feat_idx].clamp(min=fmin, max=fmax)
+
+            if use_scheduler:
+                scheduler.step(loss.item())
 
             # Break conditions
             if risk.item() < tau:
@@ -210,7 +235,7 @@ class EntropicRiskCE(CEGenerator):
             
             # Print verbose info
             if verbose:
-                print(f"Iteration {iterations:03d}: Entropic risk = {risk.item():.08f}")
+                print(f"Iteration {iterations:03d}: Entropic risk={risk.item():.08f}, Norm={dist.item():.08f}, Loss={loss.item():.08f}")
                 # print(f"Current CE: {ent_ce.detach().cpu().numpy()}")
         
         # If risk threshold not met, print warning
@@ -220,4 +245,7 @@ class EntropicRiskCE(CEGenerator):
         # Return the counterfactual as a DataFrame
         res = pd.DataFrame(ent_ce.detach().cpu().numpy(), columns=instance.index)
         
-        return res
+        if get_validity:
+            return {'cf': res, 'is_valid': cf_is_valid}
+        else:
+            return res
