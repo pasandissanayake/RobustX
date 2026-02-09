@@ -246,6 +246,7 @@ class EntropicRiskCE(CEGenerator):
         res = pd.DataFrame(ent_ce.detach().cpu().numpy(), columns=instance.index)
         
         if get_validity:
-            return {'cf': res, 'is_valid': cf_is_valid}
+            res['is_valid'] = cf_is_valid
+            return res
         else:
             return res
