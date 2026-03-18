@@ -127,6 +127,15 @@ class EntropicRiskCE(CEGenerator):
             :return: A DataFrame representing the generated counterfactual explanation.
         """
 
+        if norm=="l1":
+            norm_loss = torch.nn.L1Loss()
+            w_norm = 1 # Multi-Wachter norm -- Added after ICML submission
+        elif norm=="l2":
+            norm_loss = torch.nn.MSELoss()
+            w_norm = 2
+        else:
+            print(f"Invalid norm. Should be either 'l1' or 'l2', got {norm}")
+
 
         init_cf_generator = WachterMultiTarget(ct=self.task)
         ref_ce = init_cf_generator.generate_for_instance(
@@ -137,6 +146,7 @@ class EntropicRiskCE(CEGenerator):
             project_to_range=project_to_range,
             permitted_ranges=permitted_ranges,
             verbose=verbose,
+            norm=w_norm,
             **wachter_args
         )
         # ref_ce = instance
@@ -173,13 +183,7 @@ class EntropicRiskCE(CEGenerator):
             weights=target_weights
         ).to(device)
 
-        if norm=="l1":
-            norm_loss = torch.nn.L1Loss()
-        elif norm=="l2":
-            norm_loss = torch.nn.MSELoss()
-        else:
-            print(f"Invalid norm. Should be either 'l1' or 'l2', got {norm}")
-
+        
         # Optimization loop
         iterations = 0
         cf_is_valid = False

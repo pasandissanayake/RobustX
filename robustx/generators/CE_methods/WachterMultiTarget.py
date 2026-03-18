@@ -15,11 +15,12 @@ class CostLoss(nn.Module):
     Inherits from nn.Module.
     """
 
-    def __init__(self):
+    def __init__(self, norm:int):
         """
         Initializes the CostLoss module.
         """
         super(CostLoss, self).__init__()
+        self.norm = norm
 
     def forward(self, x1, x2):
         """
@@ -29,7 +30,7 @@ class CostLoss(nn.Module):
         @param x2: The second tensor (e.g., the counterfactual instance).
         @return: The absolute difference between x1 and x2.
         """
-        dist = torch.abs(x1 - x2)
+        dist = torch.linalg.vector_norm(x1 - x2, ord=self.norm)
         return dist
 
 
@@ -43,6 +44,7 @@ class WachterMultiTarget(CEGenerator):
         lr: float = 0.02,
         max_iter: int = 1000,
         epsilon: float = 1e-3,
+        norm: int = 1,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         immutable_features: Iterable[str] = [],
         project_to_range: bool = False,
@@ -69,7 +71,7 @@ class WachterMultiTarget(CEGenerator):
         optimiser = torch.optim.Adam([wac], lr, amsgrad=True)
 
         validity_loss = torch.nn.BCELoss()
-        cost_loss = CostLoss()
+        cost_loss = CostLoss(norm=norm)
 
         iterations = 0
         cf_is_valid = False
